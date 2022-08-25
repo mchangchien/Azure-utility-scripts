@@ -1,6 +1,10 @@
 # script name: AutoSetBaseline.ps1
 # author: Matt Changchien(matt.changchien@microsoft.com)
 # purpose: To automatically run the the VA query and set the qeury result as baseline
+#
+# prerequisite: you need to install powershell modules (Az module, SQlserver) 
+#               see https://docs.microsoft.com/en-us/powershell/azure/install-az-ps?view=azps-8.2.0 and https://docs.microsoft.com/en-us/sql/powershell/download-sql-server-ps-module?view=sql-server-ver16
+#
 # How to use:
 #           1. determine which  VA(vulnerability Assessment) rule you would like to reset the baseline
 #           2. go to Azure Portal to copy that VA rule's query and paste it for $baseline_query
@@ -20,6 +24,7 @@ $params = @{'Database' = 'Database1'; 'ServerInstance' =  'mchangchien0705.datab
 		'Query' = "SELECT USER_NAME(member_principal_id) AS [Owner] FROM sys.database_role_members WHERE USER_NAME(role_principal_id) = 'db_owner' AND USER_NAME(member_principal_id) != 'dbo'" }
 
 $rule_id = 'VA1258'
+$outputFilePath = "C:\Users\mchangchien\Desktop\output.txt"
 
 
 
@@ -28,11 +33,15 @@ $rule_id = 'VA1258'
 # first we get a list of sql server and go through each of them
 # then we only deal with  servers that have account has password defined in $ServerAccountPwd
 
+"Start the process" | Out-File -FilePath $outputFilePath
+
 $server_result = Get-AzResourceGroup | Get-AzSqlServer
 For ($i = 0; $i -lt $server_result.count; $i++)
 {
 	Write-host "----------------------------"; 
+  Add-Content -Path $outputFilePath -Value "----------------------------"
   Write-host $server_result[$i].servername; 
+  Add-Content -Path $outputFilePath -Value $server_result[$i].servername;
 	#Write-host $server_result[$i].resourcegroupname; 
 	#Write-host $server_result[$i].fullyqualifieddomainname; 
 	#Write-host "----------------------------";
@@ -45,12 +54,15 @@ For ($i = 0; $i -lt $server_result.count; $i++)
 	if ($ServerAccountPwd.$server_name -eq $null)
 	{
 		Write-host "no password information, skip the server:$server_name";
+    Add-Content -Path $outputFilePath -Value "no password information, skip the server:$server_name";
     Write-host "----------------------------";
+    Add-Content -Path $outputFilePath -Value "----------------------------";
 		continue
 	}
 	else
 	{
 		Write-host "has account and password information";
+    Add-Content -Path $outputFilePath -Value "has account and password information";
 	}
 	
   # store the server account and password info
@@ -67,6 +79,7 @@ For ($i = 0; $i -lt $server_result.count; $i++)
 		if($database_name -eq 'master')
 		{continue}
 		Write-host $database_name;
+    Add-Content -Path $outputFilePath -Value "Database name: $database_name";
 		
     # prepare the parameters for executing query
 		$params = @{'Database' = $database_name; 'ServerInstance' =  $server_fqdn; 'Username' = $server_admin; 'Password' = $server_admin_pwd; 'OutputSqlErrors' = $true;
@@ -87,8 +100,9 @@ For ($i = 0; $i -lt $server_result.count; $i++)
 				$arrayList.Add(@($query_result[$k].Owner))			
 			}
 			#Write-host $query_result
+      Add-Content -Path $outputFilePath -Value $arrayList	;
 			#Write-host $arrayList	
-			Set-AzSqlDatabaseVulnerabilityAssessmentRuleBaseline -ResourceGroupName $rg_name -ServerName $server_name -DatabaseName $database_name -BaselineResult $arrayList -RuleID $rule_id
+			Set-AzSqlDatabaseVulnerabilityAssessmentRuleBaseline -ResourceGroupName $rg_name -ServerName $server_name -DatabaseName $database_name -BaselineResult $arrayList -RuleID $rule_id | Out-File -FilePath $outputFilePath -Append
 		}
 	}
   #Write-host "----------------------------";
