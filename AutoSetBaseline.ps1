@@ -11,8 +11,8 @@
 
 # predefined parameters
 $ServerAccountPwd = @{
-mchangchien0705 = @{'ServerName' = 'mchangchien0705'; 'ServerInstance' =  'mchangchien0705.database.windows.net'; 'Username' = 'azureuser'; 'Password' = 'Azure@User123'};
-mchangchien0501 = @{'ServerName' = 'mchangchien0501'; 'ServerInstance' =  'mchangchien0501.database.windows.net'; 'Username' = 'azureuser'; 'Password' = 'Azure@User123'}}
+mchangchien0705 = @{'ServerName' = 'mchangchien0705'; 'ServerInstance' =  'mchangchien0705.database.windows.net'; 'Username' = 'azureuser'; 'Password' = 'Pa$$word'};
+mchangchien0501 = @{'ServerName' = 'mchangchien0501'; 'ServerInstance' =  'mchangchien0501.database.windows.net'; 'Username' = 'azureuser'; 'Password' = 'Pa$$word'}}
 
 $baseline_query = "SELECT USER_NAME(member_principal_id) AS [Owner] FROM sys.database_role_members WHERE USER_NAME(role_principal_id) = 'db_owner' AND USER_NAME(member_principal_id) != 'dbo'"
 
