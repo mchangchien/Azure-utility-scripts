@@ -194,6 +194,7 @@ $ENVCHANGE_type_dict = @{
         20 {
             $newValueLengthMultiplier = 0  # TO DO: not sure what multiplier I should use for this
             $oldValueLengthMultiplier = 0  # TO DO: not sure what multiplier I should use for this
+            return ConvertToXMLENVCHANGERoute $str_arr            
         }
     }
 
@@ -319,7 +320,116 @@ if ($EnvValData_dec -eq 7) {
 }
 
 
+# Define function to convert byte array to XML for ENVCHANGE - some are put in reverse order because of Little Endian
+function ConvertToXMLENVCHANGERoute {
+    param (
+        [string[]]$str_arr
+    )
+    
+    # Start with token general information
+    $tokenType = $($str_arr[0])
+    $tokenLength = $($str_arr[1..2] | ForEach-Object { $_ })
+    $EnvValData = $($str_arr[3])
 
+    # deal with ENVCHANGE token data
+    $newValOffset = 4+2 # because in env type 20, the length (RoutingDataValueLength) takes 2 bytes (USHORT)
+    $newValLength = $($str_arr[4..5] | ForEach-Object { $_ })
+    $newValLength_dec = [Convert]::ToInt32(($str_arr[5]+$str_arr[4]).Replace(" ", ""), 16)
+    $oldValOffset = $newValOffset+$newValLength_dec 
+    $oldValLength_dec = 2 # it's fixed in env type 20 "Sends routing information to client"
+
+    $lastindex = $oldValOffset+2 # add 2 bytes of oldvalue and minus on
+    
+
+    # if value length is 0, then that means the value is empty string
+    if ($newValLength_dec -eq 0) {
+        $newValueByte = ""
+        $protocalValue = "" # protocoal takes 1 byte and it's at the start of the new value
+        $protocalPropertiesValue = ""
+        $alternateServerLength = ""
+        $alternateServerLength_dec = ""
+        $alternateServerValue = ""
+    }
+    else {
+        $newValueByte = $($str_arr[$newValOffset..($newValOffset+$newValLength_dec*$newValueLengthMultiplier-1)] | ForEach-Object { $_ })
+        $protocalValue = $($str_arr[$newValOffset]) # protocoal takes 1 byte and it's at the start of the new value
+        $protocalValue_dec = [Convert]::ToInt32(($protocalValue), 16)
+        $protocalPropertiesValue = $($str_arr[($newValOffset+1)..($newValOffset+2)])
+        $protocalPropertiesValue_dec = [Convert]::ToInt32(($str_arr[($newValOffset+2)]+$str_arr[($newValOffset+1)]).Replace(" ", ""), 16)
+        $alternateServerLength = $($str_arr[($newValOffset+3)..($newValOffset+4)])
+        $alternateServerLength_dec = [Convert]::ToInt32(($str_arr[$newValOffset+4]+$str_arr[$newValOffset+3]).Replace(" ", ""), 16)
+        $alternateServerValue = $($str_arr[($newValOffset+5)..($newValOffset+5+$alternateServerLength_dec*2-1)] | ForEach-Object { $_ })
+        
+        # according to https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/2b3eb7e5-d43d-4d1b-bf4d-76b9e3afc791
+        # Protocol MUST be 0, specifying TCP-IP protocol. 
+        # ProtocolProperty represents the TCP-IP port when Protocol is 0. A ProtocolProperty value of zero is not allowed when Protocol is TCP-IP.
+        if ($protocalValue_dec -eq 0)
+        {
+          $protocalValueText = "TCP/IP"
+        }
+        else
+        {
+          $protocalValueText = "Unrecognized Protocol"
+        }
+    }
+   
+
+    $ENVCHANGEROUTE = @{
+        "TOKEN TYPE" = $token_dictionary[$tokenType]
+        "TOKEN Length" = [Convert]::ToInt32(($str_arr[2]+$str_arr[1]).Replace(" ", ""), 16)
+        "ENVCHANGE DATA TYPE" = "Sends routing information to client"
+        "New Value Length" = $newValLength_dec
+        "New Value" = "N/A"
+        "Protocol" = $protocalValueText
+        "Port Number" = $protocalPropertiesValue_dec
+        "Alternate Server (Route to this server)" = ConvertHexArrayToPlaintext (ConvertLittleToBigEndian $alternateServerValue)
+        "Old Value Length" = $oldValLength_dec
+        "Old Value" = "00 00"
+    }
+
+    Write-Host "--------------------------------------------------------------------------------"
+    printOutDict $ENVCHANGEROUTE
+    Write-Host "--------------------------------------------------------------------------------"
+
+
+    $xml = @"
+<ENVCHANGE>
+    <TokenType>
+        <BYTE>$tokenType</BYTE>
+    </TokenType>
+    <Length>
+        <USHORT>$tokenLength</USHORT>
+    </Length>
+    <EnvValueData>
+        <Type>
+            <BYTE>$EnvValData</BYTE>
+        </Type>
+        <NewValue>
+            <RoutingDataValueLength>
+                <USHORT>$newValLength</USHORT>
+            </RoutingDataValueLength>
+            <RoutingDataValue>
+                <Protocol>$protocalValue</Protocol>
+                <ProtocolProperty>$protocalPropertiesValue</ProtocolProperty>
+                <AlternateServer>
+                    <US_VARCHAR>
+                        <USHORTLEN>
+                            <USHORT>$alternateServerLength </USHORT>
+                        </USHORTLEN>
+                        <BYTES>$alternateServerValue </BYTES>
+                    </US_VARCHAR>
+                </AlternateServer>
+            </RoutingDataValue>
+        </NewValue>
+        <OldValue>00 00</OldValue>
+    </EnvValueData>
+</ENVCHANGE>
+"@
+
+
+     return $lastindex 
+   # Write-Host $xml
+}
 
 # Define function to convert byte array to XML for ENVCHANGE - some are put in reverse order because of Little Endian
 function ConvertToXMLLOGINACK {
