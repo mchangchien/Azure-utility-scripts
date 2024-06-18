@@ -551,13 +551,14 @@ function ConvertToXMLINFO {
     $MsgText_offset = 11
     $MsgTextLength = $($str_arr[9..10] | ForEach-Object { $_ } )
     $MsgTextLength_dec = [Convert]::ToInt32(($MsgTextLength[1]+$MsgTextLength[0]).Replace(" ", ""), 16)
+    
     $serverName_Offset = $MsgText_offset+$MsgTextLength_dec*2+1   # +1 byte to skip the BYTELEN position
     $serverNameLength = $($str_arr[$MsgText_offset+$MsgTextLength_dec*2])
     $serverNameLength_dec = [Convert]::ToInt32(($serverNameLength), 16)
     $procName_Offset = $serverName_Offset+$serverNameLength_dec*2+1   # +1 byte to skip the BYTELEN position
     $procNameLength = $($str_arr[$serverName_Offset+$serverNameLength_dec*2])
     $procNameLength_dec = [Convert]::ToInt32(($procNameLength), 16)
-    $lineNumber_Offset = $procName_Offset+$procNameLength_dec*2+1
+    $lineNumber_Offset = $procName_Offset+$procNameLength_dec*2 # NO Need +1 byte to skip the BYTELEN position
 
 
     # get the data for MSgText and ServerName and ProcName
@@ -743,7 +744,7 @@ $ERROR_class_dict = @{
     $procName_Offset = $serverName_Offset+$serverNameLength_dec*2+1   # +1 byte to skip the BYTELEN position
     $procNameLength = $($str_arr[$serverName_Offset+$serverNameLength_dec*2])
     $procNameLength_dec = [Convert]::ToInt32(($procNameLength), 16)
-    $lineNumber_Offset = $procName_Offset+$procNameLength_dec*2+1
+    $lineNumber_Offset = $procName_Offset+$procNameLength_dec*2 # NO Need +1 byte to skip the BYTELEN position
 
 
     # get the data for MSgText and ServerName and ProcName
