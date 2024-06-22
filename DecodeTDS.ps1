@@ -26,9 +26,33 @@ $token_dictionary = @{
 
 }
 
+# variables declaration
+# Create a hashtable - based on https://learn.microsoft.com/zh-cn/openspecs/windows_protocols/ms-tds/773a62b6-ee89-4c02-9e5e-344882630aac
+$FeatureExttoken_dictionary = @{
+    "01" = "SESSIONRECOVERY"
+    "02" = "FEDAUTH"
+    "04" = "COLUMNENCRYPTION"
+    "05" = "GLOBALTRANSACTIONS"
+    "08" = "AZURESQLSUPPORT"
+    "09" = "DATACLASSIFICATION"
+    "0A" = "UTF8_SUPPORT"
+    "0B" = "AZURESQLDNSCACHING"
+    "FF" = "TERMINATOR"
+}
 
-
-
+# variables declaration
+# Create a hashtable - based on https://learn.microsoft.com/zh-cn/openspecs/windows_protocols/ms-tds/773a62b6-ee89-4c02-9e5e-344882630aac
+$VariableType_dictionary = @{
+    "featureDataLen" = "DWORD"
+    "FeatureData_InitSessionRecoveryData_Len" = "DWORD"
+    "04" = "COLUMNENCRYPTION"
+    "05" = "GLOBALTRANSACTIONS"
+    "08" = "AZURESQLSUPPORT"
+    "09" = "DATACLASSIFICATION"
+    "0A" = "UTF8_SUPPORT"
+    "0B" = "AZURESQLDNSCACHING"
+    "FF" = "TERMINATOR"
+}
 
 
 ###################################################################
@@ -1054,6 +1078,85 @@ $xml = @"
 }
 
 
+# Define function to convert byte array to XML for ENVCHANGE - some are put in reverse order because of Little Endian
+function ConvertToXMLFEATUREEXTACK {
+    param (
+        [string[]]$str_arr
+    )
+
+# mapping Status according to https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/3c06f110-98bd-4d5b-b836-b1ba66452cb7
+$Done_status_dict = @{
+    ([Convert]::ToInt32(0, 16)) = "DONE_FINAL. This DONE is the final DONE in the request."
+    ([Convert]::ToInt32(1, 16)) = "DONE_MORE. This DONE message is not the final DONE message in the response. Subsequent data streams to follow."
+    ([Convert]::ToInt32(2, 16)) = "DONE_ERROR. An error occurred on the current SQL statement. A preceding ERROR token SHOULD be sent when this bit is set."
+    ([Convert]::ToInt32(4, 16)) = "DONE_INXACT. A transaction is in progress.<43>"
+    ([Convert]::ToInt32(10, 16)) = "DONE_COUNT. The DoneRowCount value is valid. This is used to distinguish between a valid value of 0 for DoneRowCount or just an initialized variable."
+    ([Convert]::ToInt32(20, 16)) = "DONE_ATTN. The DONE message is a server acknowledgement of a client ATTENTION message."
+    ([Convert]::ToInt32(100, 16)) = "DONE_SRVERROR. Used in place of DONE_ERROR when an error occurred on the current SQL statement, which is severe enough to require the result set, if any, to be discarded."
+}
+
+    # Start with token general information
+    $tokenType = $($str_arr[0])
+    $status = $($str_arr[1..2] | ForEach-Object { $_ })
+    $status_reverse = $($str_arr[2..1] | ForEach-Object { $_ })
+    $curCmd = $($str_arr[3..4] | ForEach-Object { $_ } )
+    $curCmd_reverse = $($str_arr[4..3] | ForEach-Object { $_ } )
+
+
+    # DoneRowCount is ULONGLONG (has 8 bytes) after TDS 7.2, is LONG (4 bytes) prior to TDS 7.2
+    # since we cannot determine the TDS version here, check the the thrid byte of the DoneRowCount if it's not a token type
+    # then that means DoneRowCount likely has 4 bytes(LONG)
+    if ($null -eq $token_dictionary[$str_arr[9]])
+    {
+        $doneRowCount = $($str_arr[5..12] | ForEach-Object { $_ })
+        $doneRowCount_reverse = $($str_arr[12..5] | ForEach-Object { $_ })
+        $lastindex = 12
+    }
+    else
+    {
+        $doneRowCount = $($str_arr[5..8] | ForEach-Object { $_ })
+        $doneRowCount_reverse = $($str_arr[8..5] | ForEach-Object { $_ })
+        $lastindex = 8
+    }
+
+
+
+    # form the LOGINACK hash table with decoded info
+    # more info on https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/490e563d-cc6e-4c86-bb95-ef0186b98032
+    $DONE = @{
+        "TOKEN TYPE" = $token_dictionary[$tokenType]
+        "Status" = $Done_status_dict[[Convert]::ToInt32((($status_reverse -join '')).Replace(" ", ""), 16)]
+        "Current SQL Statement" = [Convert]::ToInt32((($curCmd_reverse -join '')).Replace(" ", ""), 16)
+        "Done Row Count" = [Convert]::ToInt32((($doneRowCount_reverse -join '')).Replace(" ", ""), 16)
+    }
+
+    Write-Host "--------------------------------------------------------------------------------"
+    printOutDict $DONE
+    Write-Host "--------------------------------------------------------------------------------"
+
+# Different XML label/format depeneding on EnvValData type
+# TO DO: soem types are not being dealt well here. 
+# https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/2b3eb7e5-d43d-4d1b-bf4d-76b9e3afc791
+$xml = @"
+<DONE>
+    <TokenType>
+        <BYTE>FD </BYTE>
+    </TokenType>
+    <Status>
+        <USHORT>00 00 </USHORT>
+    </Status>
+    <CurCmd>
+        <USHORT>00 00 </USHORT>
+    </CurCmd>
+    <DoneRowCount>
+        <LONGLONG>00 00 00 00 00 00 00 00 </LONGLONG>
+    </DoneRowCount>
+</DONE>
+"@
+    
+    return $lastindex
+   # Write-Host $xml
+}
 
 
 
@@ -1219,7 +1322,7 @@ function ConvertToXML123 {
     return $xml
 }
 
-# Define function to convert byte array to XML
+# Define function to get the substring out of array
 function GetFieldValue {
     param (
         $array,
@@ -1233,7 +1336,7 @@ function GetFieldValue {
     }
     else
     {
-       return $str_arr[($OffSet+8)..($OffSet+8+$len*2-1)]
+       return $array[($OffSet+8)..($OffSet+8+$len*2-1)]
     }
 }
 
@@ -1283,9 +1386,223 @@ function PWDDecoder {
 
 }
 
+# Define function to parse the FeatureExt tokens
+function lengthsReaderBasedOnVarType {
+    param (
+        $array,
+        $startOffest,
+        $type
+    )
+    $output = ''
+    switch ($type)
+    {
+      "DWORD"
+      {
+        $output = $array[$startOffest+3]+$array[$startOffest+2]+$array[$startOffest+1]+$array[$startOffest+0]
+        $nextStartOffset = $startOffest+4
+      }
+      "B_VARCHAR"
+      {
+        $output = $array[$startOffest]
+        $nextStartOffset = $startOffest+1
+      }
+      "BYTELEN"
+      {
+        $output = $array[$startOffest]
+        $nextStartOffset = $startOffest+1
+      }
+    }
+    return $output, $nextStartOffset
+}
+
+
+# Define function to parse the FeatureExt tokens
+function sessionStateDataParser {
+    param (
+        $array
+    )
+    $i = 0
+    
+    # loop until we hit the last index
+    while ($i -lt ($array.Length))
+    {
+      $stateId =  $array[$i]
+      $stateLen =  $array[$i+1]
+      $stateLen_dec = [Convert]::ToInt32($stateLen.Replace(" ", ""), 16)
+      $stateValue = $array[($i+2)..($i+2+$stateLen_dec-1)]
+      $i = $i+2+$stateLen_dec
+      
+      Write-Host "State Id : $stateId"
+      Write-Host "State Length : $stateLen_dec"
+      Write-Host "State Value: $stateValue"
+    }
+}
 
 
 
+# Define function to parse the FeatureExt tokens
+function featureDataParser4SESSIONRECOVERY {
+    param (
+        $array
+    )
+    $startOffest = 0
+
+    # loop until we hit the last index
+    while ($startOffest -lt ($array.Length))
+    {
+      #$initSessionRecoveryDataLen = $array[($i+8)]+$array[($i+7)]+$array[($i+6)]+$array[($i+5)]
+      $SessionRecoveryDataLen, $nextStartOffset= lengthsReaderBasedOnVarType $array $startOffest "DWORD" 
+      $SessionRecoveryDataLen_dec = [Convert]::ToInt32($SessionRecoveryDataLen.Replace(" ", ""), 16)
+      Write-Host "InitSessionRecoveryData Length: $SessionRecoveryDataLen_dec"
+      
+      
+      $recoveryDatabaseLen, $nextStartOffset = lengthsReaderBasedOnVarType $array $nextStartOffset "B_VARCHAR"
+      $recoveryDatabaseLen_dec = [Convert]::ToInt32($recoveryDatabaseLen.Replace(" ", ""), 16)
+      if ($recoveryDatabaseLen_dec -gt 0)
+      {
+        $recoveryDatabase = $array[($nextStartOffset)..($nextStartOffset+$recoveryDatabaseLen_dec*2-1)]
+        $recoveryDatabaseTxt = ConvertHexArrayToPlaintext (ConvertLittleToBigEndian $recoveryDatabase)  
+        $nextStartOffset = ($nextStartOffset+$recoveryDatabaseLen_dec*2)          
+      }
+      else
+      {
+        $recoveryDatabase = ""
+        $recoveryDatabaseTxt = ""
+      }
+      Write-Host "Recovery Database: $recoveryDatabaseTxt"
+      
+      $recoveryCollationLen, $nextStartOffset = lengthsReaderBasedOnVarType $array $nextStartOffset "BYTELEN" # it has the same structure as RecoveryDatabase
+      $recoveryCollationLen_dec = [Convert]::ToInt32($recoveryCollationLen.Replace(" ", ""), 16)
+      if ($recoveryCollationLen_dec -gt 0)
+      {
+        $recoveryCollation = $array[($nextStartOffset)..($nextStartOffset+$recoveryCollationLen_dec-1)]
+        $recoveryCollationTxt = $recoveryCollation # have not known how to handle this string yet ConvertHexArrayToPlaintext (ConvertLittleToBigEndian $recoveryCollation)                
+        $nextStartOffset = ($nextStartOffset+$recoveryCollationLen_dec)   
+      }
+      else
+      {
+        $recoveryCollation = ""
+        $recoveryCollationTxt = ""
+      }
+      Write-Host "Recovery Collation: $recoveryCollationTxt"
+      
+      $recoveryLanguageLen, $nextStartOffset = lengthsReaderBasedOnVarType $array $nextStartOffset "BYTELEN" # it has the same structure as RecoveryDatabase
+      $recoveryLanguageLen_dec = [Convert]::ToInt32($recoveryLanguageLen.Replace(" ", ""), 16)
+      if ($recoveryLanguageLen_dec -gt 0)
+      {
+        $recoveryLanguage = $array[($nextStartOffset)..($nextStartOffset+$recoveryLanguageLen_dec*2-1)]
+        $recoveryLanguageTxt = ConvertHexArrayToPlaintext (ConvertLittleToBigEndian $recoveryLanguage)                
+        $nextStartOffset = ($nextStartOffset+$recoveryLanguageLen_dec*2)   
+      }
+      else
+      {
+        $recoveryLanguage = ""
+        $recoveryLanguageTxt = ""
+      }
+      Write-Host "Recovery Language: $recoveryLanguageTxt"      
+      
+      # If there is data following - that must be session state data
+      # if nextStartOffset is less than ($startOffest+4+$SessionRecoveryDataLen_dec+1), meaning there's data behind
+      if ($nextStartOffset -lt $startOffest+4+$SessionRecoveryDataLen_dec+1)
+      {
+        $sessionStateDataSet = $array[$nextStartOffset..($startOffest+4+$SessionRecoveryDataLen_dec-1)]
+        sessionStateDataParser $sessionStateDataSet
+      }
+      $startOffest = $startOffest+4+$SessionRecoveryDataLen_dec
+    }
+    
+
+
+}
+
+
+# Define function to parse the FeatureExt tokens
+function FeatureExtParser {
+    param (
+        $array
+    )
+
+
+# Loop through the original array with a step of 2
+    for ($i = 0; $i -lt $array.Length; $i += 1) {
+        Write-Host "----------------------------------------------------------------------"
+        $featureIdtext = $FeatureExttoken_dictionary[$array[$i]]
+        Write-Host "$featureIdtext"
+
+        if ($array[$i] -eq 'ff')
+        {
+          # hit the TERMINATOR, end the function
+          return;
+        }
+        else
+        {
+          # get the feature data length
+          #$featureDataLen = $array[($i+4)]+$array[($i+3)]+$array[($i+2)]+$array[($i+1)]
+          $featureDataLen, $nextStartOffset = lengthsReaderBasedOnVarType $array ($i+1) "DWORD"  
+          $featureDataLen_dec = [Convert]::ToInt32($featureDataLen.Replace(" ", ""), 16)
+          
+          if ($featureDataLen_dec -gt 0)
+          {
+            $featureData = $array[$nextStartOffset..($nextStartOffset+$featureDataLen_dec-1)]
+                        
+            switch($array[$i])
+            {
+              # references: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/b238ee1d-249d-4780-86a8-a777f66623f2
+              "01"
+              {
+                featureDataParser4SESSIONRECOVERY $featureData
+              }
+              "02"
+              {
+                
+                
+              }
+              "04"
+              {
+                
+                
+              }
+              "05"
+              {
+                
+                
+              }
+              "08"
+              {
+                
+                
+              }
+              "09"
+              {
+                
+                
+              }
+              "0A"
+              {
+                
+                
+              }
+              "0B"
+              {
+                
+                
+              }
+            }
+            
+            
+            # add 1 byte of feature id and 4 bytes of featureDataLen(DWORD) and the actual length of feature data
+            $i = $i+5+$featureDataLen_dec-1 # calibrate to the last index of the featureData
+            
+          }
+          else
+          {
+            $i = $i+4 # increment index tracer to skip the $featureDataLen (DWORD) 4 bytes
+          }
+        }
+    }
+    
+    Write-Host "----------------------------------------------------------------------"
+}
 
 
 
@@ -1505,7 +1822,19 @@ function LoginRequestHandler {
     $CltIntName = GetFieldValue $loginrequest_arr $ibCltIntName_dec $cchCltIntName_dec
     $Language = GetFieldValue $loginrequest_arr $ibLanguage_dec $cchLanguage_dec
     $Database = GetFieldValue $loginrequest_arr $ibDatabase_dec $cchDatabase_dec
-    $SSPI = GetFieldValue $loginrequest_arr $ibSSPI_dec $cchSSPI_dec
+    
+    # according to https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/773a62b6-ee89-4c02-9e5e-344882630aac
+    # If cbSSPI < USHORT_MAX, then this length MUST be used for SSPI and cbSSPILong MUST be ignored.
+    # If cbSSPI == USHORT_MAX, then cbSSPILong MUST be checked.
+    if ($cbSSPI_dec -lt 65536)
+    {
+        $SSPI = GetFieldValue $loginrequest_arr $ibSSPI_dec $cbSSPI_dec
+    }
+    else
+    {
+        $SSPI = GetFieldValue $loginrequest_arr $ibSSPI_dec $cbSSPILong_dec
+    }
+    
     $AtchDBFile = GetFieldValue $loginrequest_arr $ibAtchDBFile_dec $cchAtchDBFile_dec
     $ChangePassword  = GetFieldValue $loginrequest_arr $ibChangePassword_dec $cchChangePassword_dec
 
@@ -1551,6 +1880,17 @@ function LoginRequestHandler {
 
     Write-Host "----------------------------------------------------------------------"
 
+
+
+    # Handle FeatureExt with AZURESQLSUPPORT (https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/81d084b0-ea23-4a9c-be4e-7aadbc5a88c3)
+    # if the last index of data less than the total LOGIN7 data length means there's  more byte following.
+    # if not, that means we might have FeatureExt token following the LOGIN7 message
+    if (($ibChangePassword_dec+$cchChangePassword_dec*2-1) -lt ($Length_dec) )
+    {
+      # Parse FeatureExt tokens
+      # get the substring (+8 is the 8 bytes from packet hearder)
+      FeatureExtParser $loginrequest_arr[($ibChangePassword_dec+$cchChangePassword_dec*2+8)..($Length_dec+8-1)]
+    }
 
     # end of the script
 }
