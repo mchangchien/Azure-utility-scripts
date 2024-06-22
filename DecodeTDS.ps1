@@ -1327,7 +1327,8 @@ function GetFieldValue {
     param (
         $array,
         $OffSet,
-        $len
+        $len,
+        $lenMultiplier
     )
 
     if ($len -eq 0) 
@@ -1336,8 +1337,24 @@ function GetFieldValue {
     }
     else
     {
-       return $array[($OffSet+8)..($OffSet+8+$len*2-1)]
+       return $array[($OffSet+8)..($OffSet+8+$len*$lenMultiplier-1)]
     }
+}
+
+
+function ConvertHexTo8BitBinary {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$hexNumber
+    )
+
+    $decimalNumber = [System.Convert]::ToInt32($hexNumber, 16)
+    $binaryNumber = [System.Convert]::ToString($decimalNumber, 2)
+
+    # Pad the binary number with leading zeros to make it 8 bits
+    $binaryNumber = $binaryNumber.PadLeft(8, '0')
+
+    return $binaryNumber
 }
 
 
@@ -1432,20 +1449,21 @@ function sessionStateDataParser {
       $stateValue = $array[($i+2)..($i+2+$stateLen_dec-1)]
       $i = $i+2+$stateLen_dec
       
-      Write-Host "State Id : $stateId"
-      Write-Host "State Length : $stateLen_dec"
-      Write-Host "State Value: $stateValue"
+      Write-Host "    State Id     : $stateId"
+      Write-Host "    State Length : $stateLen_dec"
+      Write-Host "    State Value  : $stateValue"
     }
 }
 
 
 
-# Define function to parse the FeatureExt tokens
+# Define function to parse the SessionRecovery feature data
 function featureDataParser4SESSIONRECOVERY {
     param (
         $array
     )
     $startOffest = 0
+    $theNumberOfSessionRecoveryData = 1
 
     # loop until we hit the last index
     while ($startOffest -lt ($array.Length))
@@ -1453,8 +1471,8 @@ function featureDataParser4SESSIONRECOVERY {
       #$initSessionRecoveryDataLen = $array[($i+8)]+$array[($i+7)]+$array[($i+6)]+$array[($i+5)]
       $SessionRecoveryDataLen, $nextStartOffset= lengthsReaderBasedOnVarType $array $startOffest "DWORD" 
       $SessionRecoveryDataLen_dec = [Convert]::ToInt32($SessionRecoveryDataLen.Replace(" ", ""), 16)
-      Write-Host "InitSessionRecoveryData Length: $SessionRecoveryDataLen_dec"
-      
+      Write-Host "  SessionRecoveryData ($theNumberOfSessionRecoveryData) Length: $SessionRecoveryDataLen_dec"
+      $theNumberOfSessionRecoveryData = $theNumberOfSessionRecoveryData+1
       
       $recoveryDatabaseLen, $nextStartOffset = lengthsReaderBasedOnVarType $array $nextStartOffset "B_VARCHAR"
       $recoveryDatabaseLen_dec = [Convert]::ToInt32($recoveryDatabaseLen.Replace(" ", ""), 16)
@@ -1469,7 +1487,7 @@ function featureDataParser4SESSIONRECOVERY {
         $recoveryDatabase = ""
         $recoveryDatabaseTxt = ""
       }
-      Write-Host "Recovery Database: $recoveryDatabaseTxt"
+      Write-Host "  Recovery Database: $recoveryDatabaseTxt"
       
       $recoveryCollationLen, $nextStartOffset = lengthsReaderBasedOnVarType $array $nextStartOffset "BYTELEN" # it has the same structure as RecoveryDatabase
       $recoveryCollationLen_dec = [Convert]::ToInt32($recoveryCollationLen.Replace(" ", ""), 16)
@@ -1484,7 +1502,7 @@ function featureDataParser4SESSIONRECOVERY {
         $recoveryCollation = ""
         $recoveryCollationTxt = ""
       }
-      Write-Host "Recovery Collation: $recoveryCollationTxt"
+      Write-Host "  Recovery Collation: $recoveryCollationTxt"
       
       $recoveryLanguageLen, $nextStartOffset = lengthsReaderBasedOnVarType $array $nextStartOffset "BYTELEN" # it has the same structure as RecoveryDatabase
       $recoveryLanguageLen_dec = [Convert]::ToInt32($recoveryLanguageLen.Replace(" ", ""), 16)
@@ -1499,7 +1517,7 @@ function featureDataParser4SESSIONRECOVERY {
         $recoveryLanguage = ""
         $recoveryLanguageTxt = ""
       }
-      Write-Host "Recovery Language: $recoveryLanguageTxt"      
+      Write-Host "  Recovery Language: $recoveryLanguageTxt"      
       
       # If there is data following - that must be session state data
       # if nextStartOffset is less than ($startOffest+4+$SessionRecoveryDataLen_dec+1), meaning there's data behind
@@ -1509,11 +1527,23 @@ function featureDataParser4SESSIONRECOVERY {
         sessionStateDataParser $sessionStateDataSet
       }
       $startOffest = $startOffest+4+$SessionRecoveryDataLen_dec
+      Write-Host "  ==================================="
     }
-    
+}
+
+
+
+# Define function to parse the FedAuth feature data
+function featureDataParser4FEDAUTH {
+    param (
+        $array
+    )
+    Write-Host "  FEDAUTH $array"
 
 
 }
+
+
 
 
 # Define function to parse the FeatureExt tokens
@@ -1554,8 +1584,7 @@ function FeatureExtParser {
               }
               "02"
               {
-                
-                
+                featureDataParser4FEDAUTH $featureData                
               }
               "04"
               {
@@ -1710,6 +1739,7 @@ function LoginRequestHandler {
     $PacketSize = $xml.GetElementsByTagName("PacketSize")
     $ClientPID = $xml.GetElementsByTagName("ClientPID")
     $ConnectionID = $xml.GetElementsByTagName("ConnectionID")
+    $optionFlags3 = $xml.GetElementsByTagName("OptionFlags3")
 
     # # Get elements by tag name
     $ibHostName = $xml.GetElementsByTagName("ibHostName")
@@ -1776,8 +1806,6 @@ function LoginRequestHandler {
     $cchAtchDBFile_dec = [Convert]::ToInt32($($cchAtchDBFile.InnerText).Replace(" ", ""), 16)
     $ibChangePassword_dec = [Convert]::ToInt32($($ibChangePassword.InnerText).Replace(" ", ""), 16)
     $cchChangePassword_dec = [Convert]::ToInt32($($cchChangePassword.InnerText).Replace(" ", ""), 16)
-    $ibSSPI_dec = [Convert]::ToInt32($($ibSSPI.InnerText).Replace(" ", ""), 16)
-    $cbSSPI_dec = [Convert]::ToInt32($($cbSSPI.InnerText).Replace(" ", ""), 16)
     $cbSSPILong_dec = [Convert]::ToInt32($($cbSSPILong.InnerText).Replace(" ", ""), 16)
 
 
@@ -1813,15 +1841,15 @@ function LoginRequestHandler {
 
 
 
-    $HostName = GetFieldValue $loginrequest_arr $ibHostName_dec $cchHostName_dec
-    $UserName = GetFieldValue $loginrequest_arr $ibUserName_dec $cchUserName_dec
-    $Password = GetFieldValue $loginrequest_arr $ibPassword_dec $cchPassword_dec
-    $AppName = GetFieldValue $loginrequest_arr $ibAppName_dec $cchAppName_dec
-    $ServerName = GetFieldValue $loginrequest_arr $ibServerName_dec $cchServerName_dec
-    $Unused = GetFieldValue $loginrequest_arr $ibUnused_dec $cbUnused_dec
-    $CltIntName = GetFieldValue $loginrequest_arr $ibCltIntName_dec $cchCltIntName_dec
-    $Language = GetFieldValue $loginrequest_arr $ibLanguage_dec $cchLanguage_dec
-    $Database = GetFieldValue $loginrequest_arr $ibDatabase_dec $cchDatabase_dec
+    $HostName = GetFieldValue $loginrequest_arr $ibHostName_dec $cchHostName_dec 2
+    $UserName = GetFieldValue $loginrequest_arr $ibUserName_dec $cchUserName_dec 2
+    $Password = GetFieldValue $loginrequest_arr $ibPassword_dec $cchPassword_dec 2
+    $AppName = GetFieldValue $loginrequest_arr $ibAppName_dec $cchAppName_dec 2
+    $ServerName = GetFieldValue $loginrequest_arr $ibServerName_dec $cchServerName_dec 2
+    $Unused = GetFieldValue $loginrequest_arr $ibUnused_dec $cbUnused_dec 1
+    $CltIntName = GetFieldValue $loginrequest_arr $ibCltIntName_dec $cchCltIntName_dec 2
+    $Language = GetFieldValue $loginrequest_arr $ibLanguage_dec $cchLanguage_dec 2
+    $Database = GetFieldValue $loginrequest_arr $ibDatabase_dec $cchDatabase_dec 2
     
     # according to https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/773a62b6-ee89-4c02-9e5e-344882630aac
     # If cbSSPI < USHORT_MAX, then this length MUST be used for SSPI and cbSSPILong MUST be ignored.
@@ -1839,7 +1867,7 @@ function LoginRequestHandler {
     $ChangePassword  = GetFieldValue $loginrequest_arr $ibChangePassword_dec $cchChangePassword_dec
 
 
-
+    
     # Output for all variables - for debugging
     # Write-Host "HostName: $HostName"
     # Write-Host "UserName: $UserName"
@@ -1880,16 +1908,60 @@ function LoginRequestHandler {
 
     Write-Host "----------------------------------------------------------------------"
 
+    # determin the next Start
+    $lastIndexHostName = ($ibHostName_dec+$cchHostName_dec*2+8-1)
+    $lastIndexUserName = ($ibUserName_dec+$cchUserName_dec*1+8-1)
+    $lastIndexPassword = ($ibPassword_dec+$cchPassword_dec*2+8-1)
+    $lastIndexAppName = ($ibAppName_dec+$cchAppName_dec*2+8-1)    
+    $lastIndexServerName = ($ibServerName_dec+$cchServerName_dec*2+8-1)
+    $lastIndexUnused = ($ibUnused_dec+$cbUnused_dec*1+8-1)
+    $lastIndexCltIntName = ($ibCltIntName_dec+$cchCltIntName_dec*2+8-1)
+    $lastIndexLanguage = ($ibLanguage_dec+$cchLanguage_dec*2+8-1)    
+    $lastIndexDatabase = ($ibDatabase_dec+$cchDatabase_dec*2+8-1)
+    if ($cbSSPI_dec -lt 65536)
+    {
+        $lastIndexSSPI = ($ibSSPI_dec+$cbSSPI_dec*2+8-1)
+    }
+    else
+    {
+        $lastIndexSSPI = ($ibSSPI_dec+$cbSSPILong_dec*2+8-1) 
+    }
+    
+    $lastIndexAtchDBFile = ($ibAtchDBFile_dec+$cchAtchDBFile_dec*2+8-1)
+    $lastIndexChangePassword = ($ibChangePassword_dec+$cchChangePassword_dec*2+8-1)
+ 
+    
+    $allLastIndex = @($lastIndexHostName,$lastIndexUserName,$lastIndexPassword,$lastIndexAppName,$lastIndexServerName,$lastIndexUnused,$lastIndexCltIntName,$lastIndexLanguage,$lastIndexDatabase,$lastIndexSSPI,$lastIndexAtchDBFile,$lastIndexChangePassword)
+    $maxLastIndex = ($allLastIndex | Measure-Object -Maximum).Maximum
+    
+    $optionFlags3_hex = $($optionFlags3.InnerText).Replace(" ", "")
+    $optionFlags3_binString = ConvertHexTo8BitBinary -hexNumber $optionFlags3_hex
+    Write-Output "The 8-bit binary representation of hexadecimal $hexNumber is $optionFlags3_binString."
+    
+    # if the fourth bit(fExtension) is 1 Unused is Extension - https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/773a62b6-ee89-4c02-9e5e-344882630aac
+    # Extension data provides the offset (from the start of the message) of FeatureExt block.
+    if($optionFlags3_binString[3] -eq "1")
+    {
+      $Unused_hex,$placeholder4Offset = lengthsReaderBasedOnVarType $Unused 0 "DWORD" # use this to get the correct hex number
+      $Unused_dec = [Convert]::ToInt32($Unused_hex, 16)
 
-
+      # sanity check on the last index with Extension data(ibFeatureExtLong)
+      if ($maxLastIndex -eq ($Unused_dec+8-1) )
+      {
+        Write-Output "Sanity Check passed on maxLastIndex and Extension data(ibFeatureExtLong)"
+      }
+    }
+    
+    
+    
     # Handle FeatureExt with AZURESQLSUPPORT (https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/81d084b0-ea23-4a9c-be4e-7aadbc5a88c3)
     # if the last index of data less than the total LOGIN7 data length means there's  more byte following.
     # if not, that means we might have FeatureExt token following the LOGIN7 message
-    if (($ibChangePassword_dec+$cchChangePassword_dec*2-1) -lt ($Length_dec) )
+    if (($maxLastIndex-8) -lt ($Length_dec) )
     {
       # Parse FeatureExt tokens
       # get the substring (+8 is the 8 bytes from packet hearder)
-      FeatureExtParser $loginrequest_arr[($ibChangePassword_dec+$cchChangePassword_dec*2+8)..($Length_dec+8-1)]
+      FeatureExtParser $loginrequest_arr[($maxLastIndex+1)..($Length_dec+8-1)]
     }
 
     # end of the script
