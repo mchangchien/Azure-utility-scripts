@@ -55,6 +55,16 @@ $VariableType_dictionary = @{
 }
 
 
+# variables declaration
+# Create a hashtable - based on https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/773a62b6-ee89-4c02-9e5e-344882630aac
+$FEDAUTH_dictionary = @{
+    "0000010" = "ADAL"
+    "0000001" = "Security Token"
+    "0000000" = "Live ID Compact Token"
+}
+
+
+
 ###################################################################
 
 # Utiliy Functions section
@@ -1538,12 +1548,70 @@ function featureDataParser4FEDAUTH {
     param (
         $array
     )
+    $startOffset = 0
     Write-Host "  FEDAUTH $array"
-
-
+    $option = $array[$startOffset]
+    $startOffset = $startOffset+1
+    
+    
+    $optionBinaryString = ConvertHexTo8BitBinary -hexNumber $option
+    $bFedAuthLibrary    = $optionBinaryString[0..6]
+    $optionBinaryString = $optionBinaryString[7]
+    $bFedAuthLibraryStr = -join $bFedAuthLibrary
+    
+    # find FedAUth library definition here: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/773a62b6-ee89-4c02-9e5e-344882630aac
+    $bFedAuthLibraryTxt = $FEDAUTH_dictionary[$bFedAuthLibraryStr]
+    Write-Host "Fed Auth Library:  $bFedAuthLibraryTxt"
+    
+    # if the library is ADAL, there should have only 1 byte left, which is workflow, according to the doc
+    if ($bFedAuthLibraryTxt -eq "ADAL")
+    {
+      switch($array[$startOffset])
+      {
+        "01"
+        {
+          Write-Host "Workflow:  Username/password. A username and password are passed to ADAL to retrieve a token."
+        }
+        "02"
+        {
+          Write-Host "Workflow:  Username/password. A username and password are passed to ADAL to retrieve a token."
+        }
+      }
+    }
+    else
+    {
+      # TO DO: parse this based on the Fed Auth library. (STS and Live ID)
+      $restOfTheArray = $array[$startOffset..($array.Length-1)]
+      Write-Host "Rest Array: $restOfTheArray"   
+    }   
 }
 
 
+# Define function to parse the COLUMNENCRYPTION feature data
+function featureDataParser4COLUMNENCRYPTION {
+    param (
+        $array
+    )
+    $startOffset = 0
+    Write-Host "  COLUMNENCRYPTION $array"
+    
+    switch($array[$startOffset])
+    {
+      # The meaning of this byte is based off of the definition here: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/773a62b6-ee89-4c02-9e5e-344882630aac
+      "01"
+      {
+        Write-Host "COLUMNENCRYPTION VERSION:  The client supports column encryption without enclave computations."
+      }
+      "02"
+      {
+        Write-Host "COLUMNENCRYPTION VERSION:  The client SHOULD support column encryption when encrypted data require enclave computations."
+      }
+      "03"
+      {
+        Write-Host "COLUMNENCRYPTION VERSION:  The client SHOULD support column encryption when encrypted data require enclave computations with the additional ability to cache column encryption keys that are to be sent to the enclave and the ability to retry queries when the keys sent by the client do not match what is needed for the query to run."
+      }
+    }
+}
 
 
 # Define function to parse the FeatureExt tokens
@@ -1588,8 +1656,7 @@ function FeatureExtParser {
               }
               "04"
               {
-                
-                
+                featureDataParser4COLUMNENCRYPTION $featureData                
               }
               "05"
               {
@@ -1881,7 +1948,7 @@ function LoginRequestHandler {
     # Write-Host "SSPI: $SSPI"
     # Write-Host "AtchDBFile: $AtchDBFile"
     # Write-Host "ChangePassword: $ChangePassword"
-    # # Write-Host "----------------------------------------------------------------------"
+    # #Write-Host "----------------------------------------------------------------------"
 
 
 
@@ -1951,8 +2018,6 @@ function LoginRequestHandler {
         Write-Output "Sanity Check passed on maxLastIndex and Extension data(ibFeatureExtLong)"
       }
     }
-    
-    
     
     # Handle FeatureExt with AZURESQLSUPPORT (https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/81d084b0-ea23-4a9c-be4e-7aadbc5a88c3)
     # if the last index of data less than the total LOGIN7 data length means there's  more byte following.
