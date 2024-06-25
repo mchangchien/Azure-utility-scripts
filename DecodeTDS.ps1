@@ -1614,6 +1614,77 @@ function featureDataParser4COLUMNENCRYPTION {
 }
 
 
+# Define function to parse the AZURESQLSUPPORT feature data
+function featureDataParser4AZURESQLSUPPORT {
+    param (
+        $array
+    )
+    $startOffset = 0
+    Write-Host "  AZURESQLSUPPORT $array"
+    
+    switch($array[$startOffset])
+    {
+      # The meaning of this byte is based off of the definition here: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/773a62b6-ee89-4c02-9e5e-344882630aac
+      "00"
+      {
+        Write-Host "AZURE SQL SUPPORT:  The client supports failover partner login with read-only intent in Azure SQL Database."
+      }
+      "01"
+      {
+        Write-Host "AZURE SQL SUPPORT:  The client does not support failover partner login with read-only intent in Azure SQL Database."
+      }
+    }
+}
+
+
+# Define function to parse the DATACLASSIFICATION feature data
+function featureDataParser4DATACLASSIFICATION {
+    param (
+        $array
+    )
+    $startOffset = 0
+    Write-Host "  DATACLASSIFICATION $array"
+    
+    switch($array[$startOffset])
+    {
+      # The meaning of this byte is based off of the definition here: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/773a62b6-ee89-4c02-9e5e-344882630aac
+      "01"
+      {
+        Write-Host "DATA CLASSIFICATION:  The server does not send sensitivity-rank data as part of the DATACLASSIFICATION."
+      }
+      "02"
+      {
+        Write-Host "DATA CLASSIFICATION:  The server sends sensitivity-rank data as part of the DATACLASSIFICATION token."
+      }
+    }
+}
+
+
+# Define function to parse the UTF8SUPPORT feature data
+function featureDataParser4UTF8SUPPORT {
+    param (
+        $array
+    )
+    $startOffset = 0
+    Write-Host "  UTF8SUPPORT $array"
+    
+    switch($array[$startOffset])
+    {
+      # The meaning of this byte is based off of the definition here: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/773a62b6-ee89-4c02-9e5e-344882630aac
+      "00"
+      {
+        Write-Host "UTF8 SUPPORT:  The client does not support UTF-8 encoded data."
+      }
+      "01"
+      {
+        Write-Host "UTF8 SUPPORT:  The client supports UTF-8 encoded data."
+      }
+    }
+}
+
+
+
+
 # Define function to parse the FeatureExt tokens
 function FeatureExtParser {
     param (
@@ -1631,6 +1702,21 @@ function FeatureExtParser {
         {
           # hit the TERMINATOR, end the function
           return;
+        }
+        elseif($array[$i] -eq '05')
+        {
+          # hit the GLOBALTRANSACTIONS, which has no feature data and indicates the client is capable of performing Global Transactions.
+          # No feature data is sent with the GLOBALTRANSACTIONS FeatureExt. we are just going to log a note and end it here      
+          Write-Host "GLOBALTRANSACTIONS has no feature data, the presence of this means the client supports this feature."
+          $i = $i+4 # increment index tracer to skip the $featureDataLen (DWORD) 4 bytes
+        }
+        elseif($array[$i] -eq '0B')
+        {
+          # hit the AZURESQLDNSCACHING, which has no feature data and indicates the client is capable of performing AZURESQLDNSCACHING.
+          # No feature data is sent with the AZURESQLDNSCACHING FeatureExt. we are just going to log a note and end it here      
+          Write-Host "AZURESQLDNSCACHING has no feature data, the presence of this means the client supports this feature."
+          $i = $i+4 # increment index tracer to skip the $featureDataLen (DWORD) 4 bytes
+          
         }
         else
         {
@@ -1658,30 +1744,23 @@ function FeatureExtParser {
               {
                 featureDataParser4COLUMNENCRYPTION $featureData                
               }
-              "05"
-              {
-                
-                
-              }
               "08"
               {
-                
-                
+                featureDataParser4AZURESQLSUPPORT $featureData
               }
               "09"
               {
-                
-                
+                featureDataParser4DATACLASSIFICATION $featureData                
               }
               "0A"
               {
-                
-                
+                featureDataParser4UTF8SUPPORT $featureData                
               }
-              "0B"
+              default
               {
-                
-                
+                $unrecToken = $array[$i]
+                Write-Host "Unrecognized token: $unrecToken"
+                return; # end the function here, something mush hvae gone wrong
               }
             }
             
@@ -1866,7 +1945,7 @@ function LoginRequestHandler {
     $cchLanguage_dec = [Convert]::ToInt32($($cchLanguage.InnerText).Replace(" ", ""), 16)
     $ibDatabase_dec = [Convert]::ToInt32($($ibDatabase.InnerText).Replace(" ", ""), 16)
     $cchDatabase_dec = [Convert]::ToInt32($($cchDatabase.InnerText).Replace(" ", ""), 16)
-    #$ClientID_dec = [Convert]::ToInt32($($ClientID.InnerText).Replace(" ", ""), 16)   # does not comply with hex value
+    $ClientID = $ClientID.InnerText  # does not comply with hex value
     $ibSSPI_dec = [Convert]::ToInt32($($ibSSPI.InnerText).Replace(" ", ""), 16)
     $cbSSPI_dec = [Convert]::ToInt32($($cbSSPI.InnerText).Replace(" ", ""), 16)
     $ibAtchDBFile_dec = [Convert]::ToInt32($($ibAtchDBFile.InnerText).Replace(" ", ""), 16)
@@ -1896,7 +1975,7 @@ function LoginRequestHandler {
     # Write-Host "cchLanguage_dec: $cchLanguage_dec"
     # Write-Host "ibDatabase_dec: $ibDatabase_dec"
     # Write-Host "cchDatabase_dec: $cchDatabase_dec"
-    # Write-Host "ClientID_dec: $ClientID_dec"
+    # Write-Host "ClientID: $ClientID"
     # Write-Host "ibSSPI_dec: $ibSSPI_dec"
     # Write-Host "cbSSPI_dec: $cbSSPI_dec"
     # Write-Host "ibAtchDBFile_dec: $ibAtchDBFile_dec"
@@ -1956,6 +2035,7 @@ function LoginRequestHandler {
     $dictionary["HostName"] = ConvertHexArrayToPlaintext (ConvertLittleToBigEndian $HostName)
     $dictionary["UserName"] = ConvertHexArrayToPlaintext (ConvertLittleToBigEndian $UserName)
     $dictionary["Password"] = PWDDecoder $Password
+    $dictionary["ClientID"] = $ClientID
     $dictionary["AppName"] = ConvertHexArrayToPlaintext (ConvertLittleToBigEndian $AppName)
     $dictionary["ServerName"] = ConvertHexArrayToPlaintext (ConvertLittleToBigEndian $ServerName)
     $dictionary["Unused"] = ConvertHexArrayToPlaintext (ConvertLittleToBigEndian $Unused)
